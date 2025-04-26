@@ -1,0 +1,967 @@
+---
+title: "EDA Template"
+author: "Ashley Goldstein"
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    toc-title: "Contents"
+execute:
+  include: true
+  eval: true    
+  warning: false
+  message: false
+
+---
+
+
+```{r - Set up, data import and inspections, echo = FALSE, warning=FALSE, message=FALSE}
+# This code chunk does not appear library messages to create a more aesthetic output file.
+
+# Package loading
+library(tidyverse)
+library(caret)
+library(tidyr)
+library(data.table)
+library(skimr)
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(ggcorrplot)
+library(janitor)
+library(ggthemes)
+library(psych)
+library(naniar)
+library(knitr)
+library(patchwork)
+library(ggcorrplot)
+library(corrplot)
+library(DMwR2)
+library(car)
+
+dir<- getwd()
+setwd(dir)
+```
+
+
+
+
+
+# Introduction
+Home Credit is an international finance provider that offers lending solutions to individuals with little to no traditional credit history. By leveraging alternative data sources—such as demographic, transactional, and application information—the company aims to assess repayment capabilities and promote financial inclusion. However, the challenge lies in accurately predicting which applicants are likely to repay their loans while maintaining accessibility for underserved populations.
+## Purpose of Analysis
+The goal of this exploratory data analysis (EDA) is to to explore the dataset, understand patterns, and identify key factors that impact a client's ability to repay. The target variable for this analysis is the prediction of whether a client will have trouble with loan repayment. The negative class (0) represents those with good standing, while the positive class (1) represents clients that have had one or multiple late installments, or defaulted. This translates to a supervised learning binary classification analysis.
+
+
+This EDA report will cover:
+
+  - An overview of the dataset, including key variables and their descriptions.
+  - Data cleaning and preprocessing steps, such as handling missing values and outliers.
+  - Summary statistics and distributions of numerical and categorical features.
+  - Correlation analysis to identify relationships between variables.
+  - Identification of any potential biases or inconsistencies in the data.
+  
+The insights gained from this analysis will inform the development of a robust predictive model that minimizes risk while optimizing financial inclusion.
+
+By the end of this EDA, we expect to:
+
+  - Identify the most relevant features that contribute to client repayment behavior
+  - Detect and address any data anomalies or inconsistencies
+  - Generate visualizations and descriptive statistics to support data-driven decision-making.
+  - Establish a foundation for feature engineering and predictive modeling.
+
+The findings from this analysis will serve as a crucial step in building a machine learning model that improves Home Credit’s risk assessment and enhances its ability to provide responsible lending solutions.
+
+
+# Data Overview
+The dataset is comprised of multiple different compilations regarding an applicant's credit history. These data sets contain basic information regarding gender, marital status, employment, and education status, application and loan information if the client has received HomeCredit loans previously, as well as esoteric data like loan history within their social circle, size of their home,and commute status.  For the purpose of this EDA, we will be primarily focusing on the training data file. Other files may be examined and merged as we move into feature engineering and modeling. 
+
+The target variable for this analysis is the prediction of whether a client will have trouble with loan repayment. The negative class (0) represents those with good standing, while the positive class (1) represents clients that have had one or multiple late installments, or defaulted.
+
+## Datasets
+Application_train|test.csv is the main table, with 122 variables showcasing client information from the loan application. It is already divided into train and test sets with an 85/15 split. There are several other data sets that show promise and should be examined further for correlation to the target variable. The bureau dataset shows information regarding an applicant's previous credit lines from other financial institutions. The bureau_balance set gives a breakdown of the monthly balance on those lines. The credit_card_balance, installments_payments, and previous application data sets give comprehensive information regarding an applicant's previous loans with HomeCredit.
+
+```{r, include = FALSE}
+
+#Import data
+home_credit <- read.csv("C:/Users/agold/Documents/MSBA program/IS 6412 Cap 2/home-credit-default-risk/application_train.csv", stringsAsFactors = TRUE)
+```
+
+```{r, include = FALSE}
+#String target variable as factor for binary classification
+home_credit$TARGET <- as.factor(home_credit$TARGET)
+
+#String other binary variables based on column description, this was mainly done to streamline the correlation heatmap later in the analysis
+home_credit$FLAG_DOCUMENT_2 <- as.factor(home_credit$FLAG_DOCUMENT_2)
+home_credit$FLAG_DOCUMENT_3 <- as.factor(home_credit$FLAG_DOCUMENT_3)
+home_credit$FLAG_DOCUMENT_4 <- as.factor(home_credit$FLAG_DOCUMENT_4)
+home_credit$FLAG_DOCUMENT_5 <- as.factor(home_credit$FLAG_DOCUMENT_5)
+home_credit$FLAG_DOCUMENT_6 <- as.factor(home_credit$FLAG_DOCUMENT_6)
+home_credit$FLAG_DOCUMENT_7 <- as.factor(home_credit$FLAG_DOCUMENT_7)
+home_credit$FLAG_DOCUMENT_8 <- as.factor(home_credit$FLAG_DOCUMENT_8)
+home_credit$FLAG_DOCUMENT_9 <- as.factor(home_credit$FLAG_DOCUMENT_9)
+home_credit$FLAG_DOCUMENT_10 <- as.factor(home_credit$FLAG_DOCUMENT_10)
+home_credit$FLAG_DOCUMENT_11 <- as.factor(home_credit$FLAG_DOCUMENT_11)
+home_credit$FLAG_DOCUMENT_12 <- as.factor(home_credit$FLAG_DOCUMENT_12)
+home_credit$FLAG_DOCUMENT_13 <- as.factor(home_credit$FLAG_DOCUMENT_13)
+home_credit$FLAG_DOCUMENT_14 <- as.factor(home_credit$FLAG_DOCUMENT_14)
+home_credit$FLAG_DOCUMENT_15 <- as.factor(home_credit$FLAG_DOCUMENT_15)
+home_credit$FLAG_DOCUMENT_16 <- as.factor(home_credit$FLAG_DOCUMENT_16)
+home_credit$FLAG_DOCUMENT_17 <- as.factor(home_credit$FLAG_DOCUMENT_17)
+home_credit$FLAG_DOCUMENT_18 <- as.factor(home_credit$FLAG_DOCUMENT_18)
+home_credit$FLAG_DOCUMENT_19 <- as.factor(home_credit$FLAG_DOCUMENT_19)
+home_credit$FLAG_DOCUMENT_20 <- as.factor(home_credit$FLAG_DOCUMENT_20)
+home_credit$FLAG_DOCUMENT_21 <- as.factor(home_credit$FLAG_DOCUMENT_21)
+home_credit$FLAG_MOBIL <- as.factor(home_credit$FLAG_MOBIL)
+home_credit$FLAG_EMP_PHONE <- as.factor(home_credit$FLAG_EMP_PHONE)
+home_credit$FLAG_WORK_PHONE <- as.factor(home_credit$FLAG_WORK_PHONE)
+home_credit$FLAG_CONT_MOBILE <- as.factor(home_credit$FLAG_CONT_MOBILE)
+home_credit$FLAG_PHONE <- as.factor(home_credit$FLAG_PHONE)
+home_credit$FLAG_EMAIL <- as.factor(home_credit$FLAG_EMAIL)
+home_credit$REG_REGION_NOT_LIVE_REGION <- as.factor(home_credit$REG_REGION_NOT_LIVE_REGION)
+home_credit$REG_REGION_NOT_WORK_REGION <- as.factor(home_credit$REG_REGION_NOT_WORK_REGION)
+home_credit$LIVE_REGION_NOT_WORK_REGION <- as.factor(home_credit$LIVE_REGION_NOT_WORK_REGION)
+home_credit$REG_CITY_NOT_LIVE_CITY <- as.factor(home_credit$REG_CITY_NOT_LIVE_CITY)
+home_credit$REG_CITY_NOT_WORK_CITY <- as.factor(home_credit$REG_CITY_NOT_WORK_CITY)
+home_credit$LIVE_CITY_NOT_WORK_CITY <- as.factor(home_credit$LIVE_CITY_NOT_WORK_CITY)
+```
+
+```{r - glimpse, echo = FALSE}
+# Overview of the dataset
+glimpse(home_credit)  # Check structure
+summary(home_credit)  # Summary statistics
+#See distribution of target variable
+prop.table(table(home_credit$TARGET))
+```
+```{r, echo = FALSE}
+#First few rows of application dataset
+#head(home_credit[:,1:5])
+
+```
+Looking at the data variables, there are a number that can be immediately recognized as influential on the target. Income, credit amount of the loan, external credit scores, age of applicant, employment length, and type of loan. 
+```{r, echo = FALSE}
+# Histogram of target variable to show skewed distribution
+
+home_credit |> 
+  ggplot(aes(x = as.factor(TARGET))) +  #factor to show binary classification
+  geom_bar(fill = 'darkred') +  
+  scale_x_discrete(labels = c('0' = 'No repayment issues', '1' = 'Repayment Issues')) + 
+  scale_y_continuous(labels = function(x) format(x, big.mark = ',', scientific = FALSE)) +  # get rid of sci notation on y axis
+  ggtitle('Histogram of Target Variable in the HomeCredit Dataset') +
+  labs(x = NULL, y = "Count") +  # remove default x label
+  theme_minimal() +
+  theme(panel.grid = element_blank()) #remove grid lines
+
+#Should I include another tick mark for y axis at 300k?
+
+```
+
+
+The target variable is distributed unevenly with 91% of clients repaying without penalty. Approximately 25,000 positive classifications within 300,000 denote an imbalance towards the negative class. Since this dataset is highly imbalanced, metrics like AUC ROC will be used to determine model performance as it is more robust to skewed data sets.
+
+```{r - structure, include = FALSE}
+# Show dataset structure
+str(home_credit)
+```
+
+## Missing Data
+With over 300,000 observations across more than 120 columns, this dataset has high-dimensionality and can be pared down to focus on the most relevant variables. The first step is to look at which columns contain a large percentage of missing data, and columns that are exhibit low- or non-variance. Below is a bar chart showing the top twenty columns with missing data.
+
+```{r, echo = FALSE}
+# Check missing values percentage
+missing_values <- home_credit %>%
+  summarise_all(~ mean(is.na(.))) %>%
+  gather() %>%
+  arrange(desc(value)) %>%
+  filter(value > 0)
+
+# Keep only top 20 features with the most missing values
+missing_values <- missing_values %>% slice_head(n = 20)
+
+# Plot missing values
+ggplot(missing_values, aes(x = reorder(key, value), y = value * 100, fill = value)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = sprintf("%.1f%%", value * 100)), hjust = -0.1, size = 4) +  # Add labels
+  coord_flip() +
+  scale_fill_gradient(low = "red", high = "darkred") +  # Gradient for emphasis
+  labs(title = "Top 20 Features with Missing Values", x = "Feature", y = "Percentage of Missing Data") +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 10),  # Increase y-axis label size
+    axis.text.x = element_text(size = 10),  # Increase x-axis label size
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),  # Center & bold title
+    legend.position = "none"  # Remove unnecessary legend
+  )
+
+
+```
+
+Any columns that contained greater than 50% missing data were eliminated from the dataset. The exception was 'EXT_SOURCE_1' which identified credit score information for clients from external institutions. While imputation is unreliable for large percentages of missing data, it would be remiss to remove such a valuable predictor at this stage. Additional columns that were close to 50% and irrelevant to the target variable, like size of rooms in a client's home, were also filtered. 
+
+Below is a summary table with the percent missing data from the newly filtered data set.
+
+```{r, echo = FALSE}
+
+# Calculate the percentage of missing values
+missing_perc <- colMeans(is.na(home_credit))
+
+# Store original order
+original_order <- names(home_credit)
+
+# Define external source column to keep`
+col_to_keep <- "EXT_SOURCE_1"  # Store the column name as a character
+
+# Get columns with ≤45% missing data
+cols_to_keep <- names(missing_perc[missing_perc <= 0.45])
+
+# Keep external source 1 column but remove others > 45% missing
+home_credit_filtered <- home_credit %>%
+  select(all_of(unique(c(col_to_keep, cols_to_keep))))  # Corrected selection
+
+#Return original order to filtered dataset
+home_credit_filtered <- home_credit_filtered[, original_order[original_order %in% names(home_credit_filtered)]]
+
+# Create a summary table of missing values
+missing_summary <- home_credit_filtered %>%
+  summarise(across(everything(), ~ mean(is.na(.)) * 100)) %>%
+  pivot_longer(cols = everything(), names_to = "Feature", values_to = "Missing_Percentage") %>%
+  arrange(desc(Missing_Percentage)) %>%
+  filter(Missing_Percentage > 0) %>% # Show only features with missing values
+  head(14)
+
+# Display as a formatted table
+kable(missing_summary, digits = 1, col.names = c("Feature", "Missing (%)"))
+
+```
+
+After review of the columns that had a majority of missing fields, the dataset was filtered to eliminate 45 columns, most of which were related to the area size of a client's home. The following columns still contain missing data and will need to be imputed.
+
+```{r, echo = FALSE}
+# Identify columns with missing values
+na_columns <- colSums(is.na(home_credit_filtered))
+
+# Filter only columns that have NA values
+na_columns <- na_columns[na_columns > 0]
+
+# Display the columns with their count of missing values
+print(na_columns)
+
+```
+
+Prior to imputing the missing data, let's examine the remaining variables more closely. 
+
+## Outliers
+
+Before visualizing the data, let's look to see if there are any extreme outliers that might skew plots. Below is a table of outliers that are greater than three standard deviations from the mean and merit further analysis.
+```{r, echo = FALSE}
+# Function to detect extreme outliers using 3× IQR
+find_extreme_outliers_all <- function(df) {
+  extreme_outliers_list <- list()  # Store outlier indices for each column
+
+  for (col in names(df)) {
+    if (is.numeric(df[[col]])) {  # Only check numeric columns
+      Q1 <- quantile(df[[col]], 0.25, na.rm = TRUE)
+      Q3 <- quantile(df[[col]], 0.75, na.rm = TRUE)
+      IQR_value <- Q3 - Q1
+
+      # Define extreme bounds (3× IQR rule)
+      lower_bound <- Q1 - 3 * IQR_value
+      upper_bound <- Q3 + 3 * IQR_value
+
+      # Identify extreme outliers
+      outliers <- which(df[[col]] < lower_bound | df[[col]] > upper_bound)
+
+      if (length(outliers) > 0) {
+        extreme_outliers_list[[col]] <- outliers  # Store outlier indices
+      }
+    }
+  }
+  return(extreme_outliers_list)
+}
+
+# Apply function to dataset
+extreme_outliers <- find_extreme_outliers_all(home_credit_filtered)
+
+# Print summary of extreme outliers per column
+sapply(extreme_outliers, length)
+
+
+```
+
+
+```{r, echo = FALSE}
+# Function to detect extreme outliers using 3× IQR
+find_extreme_outliers <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)  # First quartile
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)  # Third quartile
+  IQR_value <- Q3 - Q1  # Interquartile Range
+
+  # Define extreme bounds
+  lower_bound <- Q1 - 20 * IQR_value
+  upper_bound <- Q3 + 15 * IQR_value
+
+  # Identify extreme outliers
+  return(which(x < lower_bound | x > upper_bound))
+}
+
+# Find extreme outliers for AMT_INCOME_TOTAL and CNT_CHILDREN
+extreme_income_outliers <- find_extreme_outliers(home_credit_filtered$AMT_INCOME_TOTAL)
+extreme_children_outliers <- find_extreme_outliers(home_credit_filtered$CNT_CHILDREN)
+extreme_age_outliers <- find_extreme_outliers(home_credit_filtered$DAYS_BIRTH)
+# Print number of extreme outliers
+```
+Number of extreme outliers in the AMT_INCOME column:
+```{r, echo = FALSE}
+cat("Number of extreme outliers in the AMT_INCOME column:", length(extreme_income_outliers))
+```
+Eighty-three extreme outliers in AMT_INCOME are explanatory for the skewed visualization but cannot be immediately discarded. These are likely real values instead of transcription errors and merit further analysis in regards to the target variable. Do applicants with self-reported high outcomes have a higher propensity to default on their loan repayments?
+
+List of AMT_INCOME extreme outliers:
+```{r, echo = FALSE}
+extreme_income_outliers
+```
+The maximum value in the AMT_INCOME column is 117,000,000, this seems more of a transcription error, possibly supposed to be 1,170,000.00, as the median is 147,150 and that seems a bit more reasonable. Since the maximum value was already discarded, it is not in this list of remaining outliers. Looking at the list of income outliers, these incomes all seem reasonable upon further exploration.
+
+Number of extreme outliers in the CNT_CLIDREN column:
+```{r, echo = FALSE}
+# Extreme outliers in children
+length(extreme_children_outliers)
+
+```
+Eighty-three extreme outliers in the income variable are explanatory for the skewed visualization but cannot be immediately discarded. These are likely real values instead of transcription errors and merit further analysis in regards to the target variable. Do applicants with self-reported high outcomes have a higher propensity to default on their loan repayments? The maximum value in the AMT_INCOME column is 117000000, this seems more of a transcription error, possibly supposed to be 1,170,000.00, as the median is 147,150 and that seems a bit more reasonable. Looking at the list of income outliers, these incomes all seem reasonable upon further exploration.
+
+```{r, include = FALSE}
+# Print number of rows removed from outlier processing
+print(nrow(home_credit) - nrow(home_credit_filtered))  # Number of removed rows
+#cap_extreme_outliers <- function(x) {
+#  lower <- quantile(x, 0.001, na.rm = TRUE)
+#  upper <- quantile(x, 0.999, na.rm = TRUE)
+#  x[x < lower] <- lower
+#  x[x > upper] <- upper
+#  return(x)
+#}
+
+# Apply to all numeric columns
+#home_credit_filtered <- home_credit_filtered %>%
+#  mutate(across(all_of(c("AMT_CREDIT", "AMT_INCOME_TOTAL")), #cap_extreme_outliers))
+
+# Remove outlier in income that likely not true
+
+home_credit_filtered <- home_credit_filtered[home_credit_filtered$AMT_INCOME_TOTAL != max(home_credit_filtered$AMT_INCOME_TOTAL, na.rm = TRUE), ]
+
+# Remove outlier in days birth that likely not true
+
+home_credit_filtered <- home_credit_filtered[home_credit_filtered$DAYS_BIRTH != max(home_credit_filtered$DAYS_BIRTH, na.rm = TRUE), ]
+
+# Remove outlier in days employed that likely not true
+
+home_credit_filtered <- home_credit_filtered[home_credit_filtered$DAYS_EMPLOYED != max(home_credit_filtered$DAYS_EMPLOYED, na.rm = TRUE), ]
+
+# Print number of rows removed from outlier processing
+print(nrow(home_credit) - nrow(home_credit_filtered))  # Number of removed rows
+```
+
+
+
+
+**Findings:**
+
+- Multiple tables showed extreme outliers, some well outside ten standard deviations from the median. 
+-Each outlier was investigated to determine if it was a real possibility or technical problem (like possible mis-transposed during data entry)
+- **Action:** Outliers were investigated, most columns were 'Windsorized' to show 0-99.5percentiles
+
+## Categorical variable analysis
+
+```{r, echo = FALSE}
+
+# Ensure TARGET is a factor
+home_credit_filtered$TARGET <- factor(home_credit_filtered$TARGET, levels = c("0", "1"))
+
+# First plot: Gender by repayment
+p1 <- ggplot(home_credit_filtered, aes(x = CODE_GENDER, fill = TARGET)) +
+  geom_bar() +
+  scale_fill_manual(values = c("0" = "darkred", "1" = "gold")) +
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  labs(x = NULL, y = "Count") +  # Remove x-axis label
+  ggtitle("Gender by Repayment") +
+  guides(fill = "none")  # Remove extra legend
+
+# Second plot: Car ownership by repayment (Change labels to "No" and "Yes")
+p2 <- ggplot(home_credit_filtered, aes(x = FLAG_OWN_CAR, fill = TARGET)) +
+  geom_bar() +
+  scale_fill_manual(values = c("0" = "darkred", "1" = "gold"), 
+                    labels = c("No Repayment Issues", "Repayment Issues")) +
+  scale_x_discrete(labels = c("N" = "No", "Y" = "Yes")) +  # Change labels
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  labs(x = NULL, y = "Count") +  # Remove x-axis label
+  ggtitle("Car Ownership")
+
+# Third plot: Contract type by repayment
+p3 <- ggplot(home_credit_filtered, aes(x = NAME_CONTRACT_TYPE, fill = TARGET)) +
+  geom_bar() +
+  scale_fill_manual(values = c("0" = "darkred", "1" = "gold")) +
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  labs(x = NULL, y = "Count") +  # Remove x-axis label
+  ggtitle("Contract Type") +
+  guides(fill = "none")  # Remove extra legend
+
+# Fourth plot: Homeownership by repayment (Change labels to "No" and "Yes")
+p4 <- ggplot(home_credit_filtered, aes(x = FLAG_OWN_REALTY, fill = TARGET)) +
+  geom_bar() +
+  scale_fill_manual(values = c("0" = "darkred", "1" = "gold")) +
+  scale_x_discrete(labels = c("N" = "No", "Y" = "Yes")) +  # Change labels
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  labs(x = NULL, y = "Count") +  # Remove x-axis label
+  ggtitle("Homeownership") +
+  guides(fill = "none")  # Remove extra legend
+
+# Stack plots using patchwork
+(p1 | p2) / (p3 | p4)  # Patchwork layout
+```
+
+**Findings**
+
+- Higher number of repayment issues seen with cash loans, but that may be because the majority loan contract type is cash, not revolving
+- Most applicants are female, there isn't a significant correlation between gender and repayment issues
+- Most applicants own a home, repayment issues do not seem to be skewed
+- Majority do not own a car, there seems to be an even proportion of repayment issues across this variable
+
+```{r, echo = FALSE}
+
+# Ensure TARGET is a factor
+home_credit_filtered$TARGET <- factor(home_credit_filtered$TARGET, levels = c("0", "1"))
+
+# First plot: Education Type by repayment
+p1 <- ggplot(home_credit_filtered, aes(x = NAME_EDUCATION_TYPE, fill = TARGET)) +
+  geom_bar() +
+  scale_fill_manual(values = c("0" = "darkred", "1" = "gold")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(panel.grid = element_blank()) +
+  labs(x = NULL, y = "Count") +  # Remove x-axis label
+  ggtitle("Education type") +
+  guides(fill = "none")  # Remove extra legend
+
+# Second plot: Marital Status by repayment (Change labels to "No" and "Yes")
+p2 <- ggplot(home_credit_filtered, aes(x = NAME_FAMILY_STATUS, fill = TARGET)) +
+  geom_bar() +
+  scale_fill_manual(values = c("0" = "darkred", "1" = "gold"), 
+                    labels = c("No Repayment Issues", "Repayment Issues")) +
+  scale_x_discrete(labels = c("N" = "No", "Y" = "Yes")) +  # Change labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(panel.grid = element_blank()) +
+  labs(x = NULL, y = "Count") +  # Remove x-axis label
+  ggtitle("Marital status")
+
+
+
+# Stack plots using patchwork
+p1 + p2 
+```
+```{r, echo = FALSE}
+# Third plot: Number of children by repayment
+p3 <- ggplot(home_credit_filtered, aes(x = OCCUPATION_TYPE, fill = TARGET)) +
+  geom_bar() +
+  scale_fill_manual(values = c("0" = "darkred", "1" = "gold")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(panel.grid = element_blank()) +
+  labs(x = NULL, y = "Count") +  # Remove x-axis label
+  ggtitle("Occupation Type") +
+  guides(fill = "none")  # Remove extra legend
+
+# Fourth plot: Housing Type by repayment (Change labels to "No" and "Yes")
+p4 <- ggplot(home_credit_filtered, aes(x = NAME_HOUSING_TYPE, fill = TARGET)) +
+  geom_bar() +
+  scale_fill_manual(values = c("0" = "darkred", "1" = "gold"), 
+                    labels = c("No Repayment Issues", "Repayment Issues")) +
+  scale_x_discrete(labels = c("N" = "No", "Y" = "Yes")) +  # Change labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(panel.grid = element_blank()) +
+  labs(x = NULL, y = "Count") +  # Remove x-axis label
+  ggtitle("Housing type") 
+
+# Stack plots using patchwork
+p3 / p4 
+```
+
+
+
+**Findings**
+
+- Most loan applicants have secondary education, many have higher education. Most repayment issues are seen in the secondary education subset.
+- Most loan applicants are married, with a higher proportion of repayment issues being seen in Single/not married demographic.
+- Most loan applicants have not reported an occupation type, but laborers and sales staff are the next most common occupations.
+- Most applicants reside in a house or apartment.
+
+
+
+## Numerical variable analysis
+
+```{r, echo = FALSE}
+# Define custom colors
+custom_colors <- c("0" = "darkred", "1" = "gold")  # 0 = Non-defaulters, 1 = Defaulters
+
+# Compute the 1st and 99th percentile to set reasonable Y-axis limits
+y_min <- quantile(home_credit_filtered$AMT_INCOME_TOTAL, 0.01, na.rm = TRUE)  # 1st percentile
+y_max <- quantile(home_credit_filtered$AMT_INCOME_TOTAL, 0.99, na.rm = TRUE)  # 99th percentile
+
+p5 <- ggplot(home_credit_filtered, aes(x = as.factor(TARGET), y = AMT_INCOME_TOTAL, fill = as.factor(TARGET))) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +  # Hide outliers visually but keep them in data
+  scale_fill_manual(values = custom_colors) +  # Apply custom colors
+  scale_x_discrete(labels = c("0" = "No", "1" = "Yes")) +  # Change X-axis labels
+  scale_y_log10(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +  # Apply log scale
+  coord_cartesian(ylim = c(y_min, y_max)) +  # Ignore extreme outliers
+  labs(title = "Income Distribution (Log Scale, No Extreme Outliers)",
+       x = "Repayment Issues", y = "Total Income (Log Scale)") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Remove legend
+
+# Boxplot for AMT_CREDIT by TARGET (Without Outlier Removal)
+p6 <- ggplot(home_credit_filtered, aes(x = as.factor(TARGET), y = AMT_CREDIT, fill = as.factor(TARGET))) +
+  geom_boxplot(alpha = 0.7) +  # Show all outliers
+  scale_fill_manual(values = custom_colors) +  # Apply custom colors
+  scale_x_discrete(labels = c("0" = "No", "1" = "Yes")) +  # Change X-axis labels
+  scale_y_log10(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
+  labs(title = "Loan Amount",
+       x = "Repayment Issues", y = "Credit amount") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Remove legend
+
+# Stack plots using patchwork
+p5 | p6 
+
+```
+
+```{r, echo = FALSE}
+# Define custom colors
+custom_colors <- c("0" = "darkred", "1" = "gold")  # 0 = Non-defaulters, 1 = Defaulters
+
+# Boxplot for AMT_INCOME_TOTAL by TARGET (Without Outlier Removal)
+p7 <- ggplot(home_credit_filtered, aes(x = as.factor(TARGET), y = -DAYS_BIRTH/365, fill = as.factor(TARGET))) + # Removed negative valuation and divided to get age in years
+  geom_boxplot(alpha = 0.7) +  # Show all outliers
+  scale_fill_manual(values = custom_colors) +  # Apply custom colors
+  scale_x_discrete(labels = c("0" = "No", "1" = "Yes")) +  # Change X-axis labels
+  scale_y_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +  # Remove scientific notation
+  labs(title = "Client age",
+       x = "Repayment Issues", y = "Age(years)") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Remove legend
+
+# Boxplot for DAYS_EMPLOYED by TARGET (Without Outlier Removal)
+p8 <- ggplot(home_credit_filtered, aes(x = as.factor(TARGET), y = -DAYS_EMPLOYED/365, fill = as.factor(TARGET))) + # Removed negative valuation and divided to get years employed
+  geom_boxplot(alpha = 0.7) +  # Show all outliers
+  scale_fill_manual(values = custom_colors) +  # Apply custom colors
+  scale_x_discrete(labels = c("0" = "No", "1" = "Yes")) +  # Change X-axis labels
+  scale_y_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +  # Remove scientific notation
+  labs(title = "Client years employed",
+       x = "Repayment Issues", y = "Employment length(years)") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Remove legend
+
+# Stack plots using patchwork
+p7 | p8 
+
+```
+
+```{r, echo = FALSE, warning = FALSE}
+# Define custom colors
+custom_colors <- c("0" = "darkred", "1" = "gold")  # 0 = Non-defaulters, 1 = Defaulters
+
+# Boxplot for CNT_CHILDREN by TARGET (Without Outlier Removal)
+p9 <- ggplot(home_credit_filtered, aes(x = as.factor(TARGET), y = CNT_CHILDREN, fill = as.factor(TARGET))) +
+  geom_boxplot(alpha = 0.7) +  # Show all outliers
+  scale_fill_manual(values = custom_colors) +  # Apply custom colors
+  scale_x_discrete(labels = c("0" = "No", "1" = "Yes")) +  # Change X-axis labels
+  scale_y_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
+  labs(title = "Number of children",
+       x = "Repayment Issues", y = "Children") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Remove legend
+
+# Boxplot for DAYS_ID_PUBLISH by TARGET (Without Outlier Removal)
+p10 <- ggplot(home_credit_filtered, aes(x = as.factor(TARGET), y = -DAYS_ID_PUBLISH, fill = as.factor(TARGET))) + # Remove negative valuation
+  geom_boxplot(alpha = 0.7) +  # Show all outliers
+  scale_fill_manual(values = custom_colors) +  # Apply custom colors
+  scale_x_discrete(labels = c("0" = "No", "1" = "Yes")) +  # Change X-axis labels
+  scale_y_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +  # Remove scientific notation
+  labs(title = "Number of days since ID changed",
+       x = "Repayment Issues", y = "Days since ID changed") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Remove legend
+
+# Stack plots using patchwork
+p9 | p10 
+
+```
+
+**Findings:**
+
+- AMT_INCOME was transformed to a logarithmic scale and had extreme outliers removed just for visualization because there were many high-income points making it difficult to visualize.
+- There aren't many differences in days since ID changed.
+- Shorter employment lengths tended to predict repayment issues.
+- Number of children also shows a lot of outliers, though these are possible and shouldn't be removed without further analysis
+
+
+## Imputation
+Numerical variables will be imputed with the median. Categorical variables will be replaced with the most referenced category, numerical values will be replaced with the median number, EXT_SOURCE will be filled with 0 to represent no credit history.
+
+```{r, include = FALSE}
+# Identify numeric columns with missing values
+numeric_na_cols <- names(na_columns)[sapply(home_credit_filtered[, names(na_columns)], is.numeric)]
+
+# Apply Median Imputation to Numeric Columns
+for (col in numeric_na_cols) {
+  home_credit_filtered[[col]][is.na(home_credit_filtered[[col]])] <- median(home_credit_filtered[[col]], na.rm = TRUE)
+}
+
+
+```
+
+```{r, echo = FALSE}
+# Mode imputation for categorical variables
+mode_impute <- function(x) {
+  ux <- unique(na.omit(x))
+  return(ux[which.max(tabulate(match(x, ux)))])  # Finds the most frequent value
+}
+
+for (col in names(missing_summary)) {
+  if (is.factor(home_credit_filtered[[col]]) || is.character(home_credit_filtered[[col]])) {
+    home_credit_filtered[[col]][is.na(home_credit_filtered[[col]])] <- mode_impute(home_credit_filtered[[col]])
+  }
+}
+
+```
+
+```{r, echo = FALSE}
+
+# Fill missing EXT_SOURCE data with 0s
+home_credit_filtered <- home_credit_filtered %>%
+  mutate(across(starts_with("EXT_SOURCE"), ~ replace_na(., 0)))
+
+# Confirm changes
+sum(is.na(home_credit_filtered$EXT_SOURCE_1))  # Should return 0
+sum(is.na(home_credit_filtered$EXT_SOURCE_2))  # Should return 0
+sum(is.na(home_credit_filtered$EXT_SOURCE_3))  # Should return 0
+
+```
+```{r, include = FALSE}
+# Recalculate missing values after imputation
+missing_after <- colSums(is.na(home_credit_filtered))
+missing_after <- missing_after[missing_after > 0]  # Keep only columns still missing values (should be empty)
+
+# Create a summary table for missing values after imputation
+missing_after_table <- data.frame(
+  Column = names(missing_after),
+  Missing_Count = missing_after
+)
+
+# Print the table (should be empty if imputation worked)
+print(missing_after_table)
+
+# Double check for na values because I'm paranoid
+sum(is.na(home_credit_filtered))  # Should return 0
+```
+After imputation, no missing data is located. The data is ready to be modeled.
+
+## Export cleaned dataset for future use
+
+```{r}
+# Save as RDS
+saveRDS(home_credit_filtered, "application_clean.rds")
+
+# Save as CSV for visual exploration
+# write.csv(application_clean, "application_clean.csv", row.names = FALSE)
+
+
+```
+
+
+
+## Correlation exploration
+
+```{r, echo = FALSE}
+home_credit_filtered$TARGET <- as.integer(home_credit_filtered$TARGET) - 1
+
+# Compute correlation matrix
+num_vars <- home_credit_filtered %>% select(where(is.numeric))
+cor_matrix <- cor(num_vars, use = "pairwise.complete.obs")
+
+
+
+# Generate heatmap with color scaling
+heatmap(cor_matrix, 
+        col = colorRampPalette(c("blue", "white", "red"))(100), # Blue to Red gradient
+        scale = "none",        # Do not scale values
+        margins = c(10, 10),   # Adjust margins to prevent overlap
+        cexRow = 0.5,          # Reduce text size for row labels
+        cexCol = 0.5,          # Reduce text size for column labels
+        main = "Correlation Heatmap",
+        Rowv = NA,  # Remove tree structure on the left
+        Colv = NA)
+
+
+```
+The target variable was cast as an integer to see if there are any particularly strong predictors, which does not seem apparent. **Three sets of variables show possible collinearity:**
+
+- AMT_GOODS_PRICE, AMT_ANNUITY, AMT_CREDIT
+- DEF_30_CNT_SOCIAL_CIRCLE, DEF_60_CNT_SOCIAL_CIRCLE, OBS_30_CNT_SOCIAL_CIRCLE, OBS_60_CNT_SOCIAL_CIRCLE
+- REGION_RATING_CLIENT_W_CITY, REGION_RATING_CLIENT
+
+Further analysis will be done to determine if one or more of these variables should be removed prior to modeling. Below will be correlation matrices and variable inflation factor comparisons for the three sets of possible collinearity noted in the heatmap. Any VIF greater than 5 indicates high collinearity, a VIF greater than 10 indicates one should be removed.
+```{r, echo = FALSE}
+# Determining high correlations using matrix
+cor_matrix[c("AMT_GOODS_PRICE", "AMT_ANNUITY", "AMT_CREDIT"), 
+           c("AMT_GOODS_PRICE", "AMT_ANNUITY", "AMT_CREDIT")]
+
+
+# Using Variance Inflation Factor to confirm true collinearity
+vif_model <- lm(TARGET ~ AMT_GOODS_PRICE + AMT_ANNUITY + AMT_CREDIT, data = home_credit_filtered)
+vif(vif_model)
+
+```
+This matrix shows that AMT_GOODS_PRICE and AMT_CREDIT have a very high correlation and are almost the same variable. In conjunction, the variance inflation factor for both of these predictors indicates collinearity. AMT_ANNUITY is also highly correlated but not as strong. For best modeling results, it would be necessary to remove one of these columns. AMT_CREDIT would be the better option to keep. 
+```{r, echo = FALSE}
+# Determining high correlations using matrix
+cor_matrix[c("DEF_30_CNT_SOCIAL_CIRCLE", "DEF_60_CNT_SOCIAL_CIRCLE", "OBS_30_CNT_SOCIAL_CIRCLE", "OBS_60_CNT_SOCIAL_CIRCLE"), 
+           c("DEF_30_CNT_SOCIAL_CIRCLE", "DEF_60_CNT_SOCIAL_CIRCLE", "OBS_30_CNT_SOCIAL_CIRCLE", "OBS_60_CNT_SOCIAL_CIRCLE")]
+
+
+# Using Variance Inflation Factor to confirm true collinearity
+vif_model <- lm(TARGET ~ DEF_30_CNT_SOCIAL_CIRCLE + DEF_60_CNT_SOCIAL_CIRCLE + OBS_30_CNT_SOCIAL_CIRCLE + OBS_60_CNT_SOCIAL_CIRCLE, data = home_credit_filtered)
+vif(vif_model)
+
+```
+Again, OBS_30_CNT_SOCIAL_CIRCLE and OBS_60_CNT_SOCIAL_CIRCLE are almost identical. VIF of over 300 indicates one should be removed prior to modeling. 
+
+```{r, echo = FALSE}
+# Determining high correlations using matrix
+cor_matrix[c("REGION_RATING_CLIENT_W_CITY", "REGION_RATING_CLIENT"), 
+           c("REGION_RATING_CLIENT_W_CITY", "REGION_RATING_CLIENT")]
+
+
+# Using Variance Inflation Factor to confirm true collinearity
+vif_model <- lm(TARGET ~ REGION_RATING_CLIENT_W_CITY + REGION_RATING_CLIENT, data = home_credit_filtered)
+vif(vif_model)
+
+```
+
+The correlation between these two variables is 0.95, with a VIF of just over 10. To avoid modeling confusion, one variable should be removed.
+
+
+```{r, echo = FALSE}
+# Remove columns with high collinearity
+home_credit_filtered <- home_credit_filtered %>%
+  select(-AMT_GOODS_PRICE, -OBS_60_CNT_SOCIAL_CIRCLE, -REGION_RATING_CLIENT_W_CITY)
+
+```
+
+
+## Logistic Regression
+Initial modeling to determine which variables best predict the target follows. 
+```{r, echo = FALSE}
+# Ensure TARGET is a factor (binary classification)
+home_credit_filtered$TARGET <- as.factor(home_credit_filtered$TARGET)
+
+# Select only numeric and categorical predictors
+predictor_cols <- setdiff(names(home_credit_filtered), c("SK_ID_CURR", "TARGET"))  # Remove ID column
+
+# Train-test split (80/20)
+set.seed(123)  # For reproducibility
+trainIndex <- createDataPartition(home_credit_filtered$TARGET, p = 0.8, list = FALSE)
+train_data <- home_credit_filtered[trainIndex, ]
+test_data <- home_credit_filtered[-trainIndex, ]
+
+
+```
+
+```{r, echo = FALSE}
+# Check for categorical columns with only one unique value
+unique_levels <- sapply(train_data[predictor_cols], function(x) if(is.factor(x)) length(unique(x)) else NA)
+
+# Print columns with only 1 unique value
+one_level_factors <- names(unique_levels[unique_levels == 1])
+print(one_level_factors)
+
+# Remove problematic columns
+predictor_cols <- setdiff(predictor_cols, one_level_factors)
+
+# Retrain logistic regression model
+logit_model <- glm(TARGET ~ ., data = train_data[, c(predictor_cols, "TARGET")], family = binomial)
+
+# Ensure all categorical variables are factors
+for (col in predictor_cols) {
+  if (is.character(train_data[[col]])) {
+    train_data[[col]] <- as.factor(train_data[[col]])
+    test_data[[col]] <- as.factor(test_data[[col]])
+  }
+}
+
+```
+
+
+
+```{r, include = FALSE}
+# Train a logistic regression model
+logit_model <- glm(TARGET ~ ., data = train_data[, c(predictor_cols, "TARGET")], family = binomial)
+
+# View model summary
+summary(logit_model)
+
+```
+
+```{r, echo = FALSE}
+# Extract coefficients from logistic regression model
+logit_summary <- summary(logit_model)
+
+# Convert coefficients to a data frame
+logit_coeffs <- as.data.frame(logit_summary$coefficients)
+
+# Rename columns for clarity
+colnames(logit_coeffs) <- c("Estimate", "Std_Error", "Z_Value", "P_Value")
+
+# Compute odds ratios (exponentiated coefficients)
+logit_coeffs$Odds_Ratio <- exp(logit_coeffs$Estimate)
+
+# Filter only significant variables (p < 0.05)
+significant_features <- logit_coeffs %>%
+  filter(P_Value < 0.05) %>%
+  arrange(P_Value) %>%  # Sort by smallest P-value (most significant)
+  head(6)  # Select top 6 features
+
+# Print only the top 6 most predictive features
+print(significant_features)
+
+```
+**Findings**
+
+- External credit scores were the top three predictors for the target variable, followed by days employed.
+
+```{r, echo = FALSE}
+# Make predictions on test data
+pred_probs <- predict(logit_model, newdata = test_data[, predictor_cols], type = "response")
+pred_labels <- ifelse(pred_probs > 0.5, 1, 0)  # Convert to binary prediction
+
+# Compute accuracy, confusion matrix, and AUC-ROC
+conf_matrix <- confusionMatrix(as.factor(pred_labels), test_data$TARGET)
+print(conf_matrix)
+
+# Compute ROC and AUC
+library(pROC)
+roc_curve <- roc(test_data$TARGET, pred_probs)
+auc_value <- auc(roc_curve)
+
+print(paste("AUC:", round(auc_value, 4)))
+
+```
+**Findings**
+The initial modeling to determine variables best used to predict the target variable is moderately competent with an AUC of 0.7456. Since 0.5 is representative of random guessing, this model does a better job but definitely has room for improvement. 
+
+# Summary of findings
+
+## Issues Identified
+
+*Missing Data*
+
+- Multiple columns were missing over 50% of data
+- These columns were not pertinent to the prediction of the target variable
+- One column EXT_SOURCE_1 relates to the credit score of an applicant from an external institution, and is deemed pertinent to target variable prediction
+- **Action:** Columns with >45% missing data were removed, with the exception of EXT_SOURCE_1. Remaining missing values were imputed using the mode for categorical variables and median for numeric variables. EXT_SOURCE columns were filled with 0 to denote a lack of credit score.
+
+*Extreme Outliers*
+
+- Several columns showed outliers that did not seem reasonably feasible
+- Especially with high-dimensional data sets, the outliers greatly skewed analysis
+- Numerical categories AMT_INCOME_TOTAL, DAYS_BIRTH were attempted to be capped at 99.9 percentile to remove outliers greatly affecting distribution but it removed 50,000 rows which was unacceptable.
+- **Action:* Extreme outliers affecting the data were removed.
+
+*Highly correlated features:*
+
+- OBS_30_CNT_SOCIAL_CIRCLE and OBS_60_CNT_SOCIAL_CIRCLE have a 99.8% correlation, making them almost identical.
+- Keeping both adds no additional value but increases noise.
+- **Action:** OBS_60_CNT_SOCIAL_CIRCLE removed to retain the most informative variable.
+- REGION_RATING_CLIENT_W_CITY and REGION_RATING_CLIENT have a 95% correlation and both show a high Variance Inflation Factor (VIF > 10), indicating redundancy.
+- **Action:** REGION_RATING_CLIENT kept and REGION_RATING_CLIENT_W_CITY dropped to simplify the model while preserving key insights.
+- 98.7% correlation between AMT_CREDIT and AMT_GOODS_PRICE, meaning they represent nearly identical information.
+- **Action:** AMT_CREDIT retained and AMT_GOODS_PRICE dropped, as it is more directly tied to loan approval decisions.
+
+*Imputation*
+
+- Missing data left after pre-processing was noted in several columns.
+- Numerical data was imputed using median since the dataset was skewed
+- Categorical data was imputed using mode.
+- Analysis was run after imputation to confirm no missing values left.
+- **Action:** Remaining missing data after column-wise elimination was imputed.
+
+
+Below is a summary of the data processing steps within this analysis to visualize all the major transformations.
+```{r, echo = FALSE}
+# Summary table of key data processing steps
+data_processing_summary <- data.frame(
+  Step = c("Original dataset size", 
+           "Columns removed (high missing values)", 
+           "Columns removed (high collinearity)", 
+           "Extreme outliers removed", 
+           "Missing values left after imputation"),
+  Count = c(nrow(home_credit), 
+            length(setdiff(names(home_credit), names(home_credit_filtered))), 
+            3,  # AMT_GOODS_PRICE, OBS_60_CNT_SOCIAL_CIRCLE, REGION_RATING_CLIENT_W_CITY
+            nrow(home_credit) - nrow(home_credit_filtered), 
+            sum(is.na(home_credit_filtered)))  # Remaining missing values handled
+)
+
+# Print as a formatted table
+kable(data_processing_summary, col.names = c("Processing Step", "Number of Changes"))
+
+```
+
+
+
+
+**Expected Impact of These Adjustments**
+
+- Improved Model Stability: Removing redundant features reduces noise and prevents overfitting.
+- Better Interpretability: Stakeholders can more easily understand key drivers of loan default.
+- More Efficient Processing: Eliminating unnecessary variables reduces computational overhead.
+- These refinements align with our goal of building an accurate, interpretable, and efficient predictive model for Home Credit's loan default risk assessment.
+
+*Initial Modeling*
+
+- With an AUC of 0.7456, the model is better than random guessing but still has a lot of room for improvement. 
+
+*Predictive Variables*
+The top predictive variables from initial modeling were:
+
+- External Source credit scores 1-3
+- Length of employment prior to applying
+
+## Future proposals
+
+Moving forward from the initial exploratory analysis, we have some future ideas to implement. 
+
+**Advanced Feature Engineering:** 
+
+- Include income to credit ratio.
+- Aggregate external credit scores and information from auxiliary data sets like bureau.csv to illuminate a strong predictive variable
+- Measure length of employment and age as a proportion to normalize the distribution
+
+**Complex imputation and outlier handling**
+
+- Use K-nearest neighbors to impute numerical data and create more realistic data for missing values
+- Penalized logistic regression to unweight rare events 
+
+**Class Imbalance Correction**
+
+- Use advanced methods like oversampling to balance the distribution between positive and negative classes or 
+
+
+**Test Advanced Models**
+
+- Use neural networks, support vector machines, or random forest models to better understand and predict this complex dataset. 
