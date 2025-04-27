@@ -1,0 +1,422 @@
+---
+title: "HC Modeling"
+author: "DataLAKE"
+date: "2025-03-04"
+output: html_document
+---
+
+
+# Preparation
+## Housekeeping
+Loading libraries and reading in data.
+```{r}
+library(dplyr)
+library(data.table)   # for faster reading if desired
+library(caret)        # for model training
+library(nnet)         # neural network engine
+library(RWeka)
+```
+
+
+```{r, read in data}
+
+# Read Data (paths may differ)
+application <- readRDS("application_train_cleaned.rds")
+bureau <- fread("bureau.csv")
+bureau_balance <- fread("bureau_balance.csv")
+
+```
+
+## Downsample
+Creating a sample dataset to reduce training time. Adjusting for wildly imbalanced TARGET variable in the downsample.
+
+```{r}
+
+# Downsample with prejudice to fix target imbalance
+# Split into majority/minority
+minority <- application %>% filter(TARGET == 1)
+majority <- application %>% filter(TARGET == 0)
+
+set.seed(42)
+# 70/30 split for downsample between majority/minority target classes
+desired_ratio <- 70 / 30
+desired_majority_size <- floor(desired_ratio * nrow(minority))
+majority_downsampled <- majority %>%
+  sample_n(size = desired_majority_size)
+
+# Unsplit (making up words over here)
+application_balanced <- bind_rows(minority, majority_downsampled)
+table(application_balanced$TARGET)
+
+```
+
+## Aggregation
+Aggregating auxillary tables so there is only one line per SK_ID number
+```{r}
+# Starting with just avg of months_balance
+bureau_balance_agg <- bureau_balance %>%
+  group_by(SK_ID_BUREAU) %>%
+  summarise(
+    MONTHS_BALANCE_MEAN = mean(MONTHS_BALANCE, na.rm = TRUE)
+  )
+
+```
+Started with avg of months_balance, but might want to use min() so it's the most recent?
+
+## Cleaning
+Clean the auxillary tables before merging
+```{r}
+dim(bureau)
+dim(bureau_balance)
+
+str(bureau)
+str(bureau_balance)
+
+```
+
+```{r}
+bureau <- bureau %>%
+  distinct()  # removes exact duplicates
+bureau_balance <- bureau_balance %>%
+  distinct()
+# Function to get % of NA in each column
+na_percentage <- function(df) {
+  sapply(df, function(x) mean(is.na(x))) * 100
+}
+
+bureau_na_pct <- na_percentage(bureau)
+bureau_balance_na_pct <- na_percentage(bureau_balance)
+
+bureau_na_pct
+bureau_balance_na_pct
+
+
+```
+
+```{r}
+# (A) Convert to character
+bureau$CREDIT_ACTIVE <- as.character(bureau$CREDIT_ACTIVE)
+str(bureau$CREDIT_ACTIVE) 
+# Check if it's "character" now
+
+# (B) Replace NA with "Unknown"
+bureau$CREDIT_ACTIVE[is.na(bureau$CREDIT_ACTIVE)] <- "Unknown"
+table(bureau$CREDIT_ACTIVE, useNA = "ifany")
+
+# (C) Re-factor
+bureau$CREDIT_ACTIVE <- as.factor(bureau$CREDIT_ACTIVE)
+str(bureau$CREDIT_ACTIVE)
+table(bureau$CREDIT_ACTIVE, useNA = "ifany")
+
+
+if ("CREDIT_ACTIVE" %in% names(bureau)) {
+  bureau$CREDIT_ACTIVE <- as.character(bureau$CREDIT_ACTIVE)
+  bureau$CREDIT_ACTIVE[is.na(bureau$CREDIT_ACTIVE)] <- "Unknown"
+  bureau$CREDIT_ACTIVE <- as.factor(bureau$CREDIT_ACTIVE)
+}
+
+bureau$AMT_CREDIT_SUM[is.na(bureau$AMT_CREDIT_SUM)] <- median(bureau$AMT_CREDIT_SUM, na.rm = TRUE)
+if("CREDIT_ACTIVE" %in% names(bureau)) {
+  bureau$CREDIT_ACTIVE[is.na(bureau$CREDIT_ACTIVE)] <- "Unknown"
+}
+bureau <- na.omit(bureau)
+
+```
+
+
+
+```{r}
+#write_csv(bureau, "bureau_cleaned.csv")
+#write_csv(bureau_balance, "bureau_balance_cleaned.csv")
+
+```
+
+
+
+
+## Merging
+Merging auxillary tables first.
+```{r}
+# Smish-smash let's join em up
+bureau_joined <- bureau %>%
+  left_join(bureau_balance_agg, by = "SK_ID_BUREAU")
+
+bureau_summary <- bureau_joined %>%
+  group_by(SK_ID_CURR) %>%
+  summarise(
+    count_records       = n(),
+    avg_credit_sum      = mean(AMT_CREDIT_SUM, na.rm = TRUE),
+    total_debt_sum      = sum(AMT_CREDIT_SUM_DEBT, na.rm = TRUE),
+    max_overdue         = max(AMT_CREDIT_SUM_OVERDUE, na.rm = TRUE),
+    avg_months_balance  = mean(MONTHS_BALANCE_MEAN, na.rm = TRUE)
+  )
+bureau_summary$avg_months_balance[is.na(bureau_summary$avg_months_balance)] <- 0
+
+```
+
+```{r, include = FALSE}
+# Recalculate missing values after imputation
+missing_after <- colSums(is.na(bureau_summary))
+missing_after <- missing_after[missing_after > 0]  # Keep only columns still missing values (should be empty)
+
+# Create a summary table for missing values after imputation
+missing_after_table <- data.frame(
+  Column = names(missing_after),
+  Missing_Count = missing_after
+)
+
+# Print the table (should be empty if imputation worked)
+print(missing_after_table)
+
+# Double check for na values because I'm paranoid
+sum(is.na(bureau_summary))  # Should return 0
+```
+
+Joining aux tables to main application table.
+```{r}
+# Smish-smash again, bureau tables to application table
+merged_data <- application_balanced %>%
+  left_join(bureau_summary, by = "SK_ID_CURR")
+
+```
+
+Because the join was a left to keep our sample large, there may be some IDs that not have missing data in columns. If intersect is much smaller, that means many ID numbers didn't match up.
+```{r}
+length(intersect(application_balanced$SK_ID_CURR, bureau_summary$SK_ID_CURR))
+length(unique(application_balanced$SK_ID_CURR))
+length(unique(bureau_summary$SK_ID_CURR))
+
+```
+Filling in missing data with 0
+```{r}
+merged_data <- merged_data %>%
+  mutate(
+    count_records      = if_else(is.na(count_records), 0, count_records),
+    avg_credit_sum     = if_else(is.na(avg_credit_sum), 0, avg_credit_sum),
+    total_debt_sum     = if_else(is.na(total_debt_sum), 0, total_debt_sum),
+    max_overdue        = if_else(is.na(max_overdue), 0, max_overdue),
+    avg_months_balance = if_else(is.na(avg_months_balance), 0, avg_months_balance)
+  )
+
+```
+
+
+
+```{r, include = FALSE}
+# Recalculate missing values after imputation
+missing_after <- colSums(is.na(merged_data))
+missing_after <- missing_after[missing_after > 0]  # Keep only columns still missing values (should be empty)
+
+# Create a summary table for missing values after imputation
+missing_after_table <- data.frame(
+  Column = names(missing_after),
+  Missing_Count = missing_after
+)
+
+# Print the table (should be empty if imputation worked)
+print(missing_after_table)
+
+# Double check for na values because I'm paranoid
+sum(is.na(merged_data))  # Should return 0
+```
+
+
+## Data transformation
+Removing irrelevant columns and transforming TARGET variable
+
+```{r}
+# Convert TARGET to factor for classification
+merged_data$TARGET <- factor(merged_data$TARGET, levels = c(0,1))
+
+# Remove IDs or any columns you don't want to feed to the model
+merged_data <- merged_data %>%
+  select(-SK_ID_CURR)
+
+# Structure check
+str(merged_data)
+
+```
+
+
+```{r}
+sum(is.na(merged_data)) 
+```
+
+
+```{r}
+saveRDS(merged_data, "merged_data.rds")
+```
+
+```{r}
+impute_numeric_col <- function(df, col_name, strategy = "median") {
+  # Check if the specified column exists
+  if (!col_name %in% names(df)) {
+    warning(paste("Column", col_name, "not found in df. Returning original df."))
+    return(df)
+  }
+  # Check if it's numeric
+  if (!is.numeric(df[[col_name]])) {
+    warning(paste("Column", col_name, "is not numeric. Returning original df."))
+    return(df)
+  }
+  
+  # Determine the fill value based on the strategy
+  fill_val <- NA
+  if (strategy == "zero") {
+    fill_val <- 0
+  } else if (strategy == "min") {
+    fill_val <- min(df[[col_name]], na.rm = TRUE)
+  } else if (strategy == "max") {
+    fill_val <- max(df[[col_name]], na.rm = TRUE)
+  } else if (strategy == "median") {
+    fill_val <- median(df[[col_name]], na.rm = TRUE)
+  } else if (strategy == "mean") {
+    fill_val <- mean(df[[col_name]], na.rm = TRUE)
+  } else if (strategy == "sum") {
+    fill_val <- sum(df[[col_name]], na.rm = TRUE)
+  } else {
+    stop("strategy must be one of 'zero', 'min', 'max', 'median', or 'mean'")
+  }
+  
+  # Replace NA with the chosen fill value
+  df[[col_name]][is.na(df[[col_name]])] <- fill_val
+  
+  return(df)
+}
+
+```
+```{r}
+#impute_numeric_col(merged_data, , 'zero')
+```
+
+
+# Modeling
+## Partitioning
+```{r}
+
+# Partition the data for train/test 
+set.seed(123)
+trainIndex <- createDataPartition(merged_data$TARGET, p = 0.8, list = FALSE)
+trainData  <- merged_data[ trainIndex, ]
+testData   <- merged_data[-trainIndex, ]
+
+# Suppose your target column is currently 0/1
+trainData$TARGET <- factor(trainData$TARGET, 
+                           levels = c(0, 1), 
+                           labels = c("Class0", "Class1"))
+
+# Double-check 
+levels(trainData$TARGET)
+# [1] "Class0" "Class1"
+
+```
+
+
+The neural network is really struggling with near-zero variance. Removing these columns
+```{r}
+library(caret)
+
+# Identify columns with zero or near-zero variance
+nzv_cols <- nearZeroVar(trainData, saveMetrics = TRUE)
+nzv_cols
+# This shows which columns are zeroVar or nearZeroVar
+
+# If you want to remove only strictly zero-variance columns:
+zero_var_cols <- rownames(nzv_cols[nzv_cols$zeroVar == TRUE, ])
+trainData_clean <- trainData[, !(names(trainData) %in% zero_var_cols)]
+
+# Or if you want to remove near-zero-variance too:
+nzv_col_names <- rownames(nzv_cols[nzv_cols$nzv == TRUE, ])
+trainData_clean <- trainData[, !(names(trainData) %in% nzv_col_names)]
+
+```
+
+
+## Model creation
+Chose nnet as a simple, one layer model to evaluate efficacy of NN, will likely upgrade to other NN with multiple layers
+
+### Build MLP models
+Build an MLP model on MultilayerPerceptron()’s default setting on the training set. Evaluate the model performance on the training set and testing set.
+```{r MLP model}
+#Designate shortened name 'MLP' for the MultilayerPercentron ANN method in RWeka
+
+MLP <- make_Weka_classifier("weka/classifiers/functions/MultilayerPerceptron")
+
+#MLP model with default values
+
+#MLP_default <- MLP(train_target ~ .,data = train_input)
+#MLP_default
+#summary(MLP_default)
+```
+
+```{r}
+# Ensure we have an outcome formula
+# We'll use all columns except "TARGET" as predictors
+myFormula <- TARGET ~ .
+
+# Training control: 5-fold CV, measure ROC
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+
+# Train a neural network
+set.seed(123)
+MLP_model <- caret::train(
+  myFormula,
+  data = trainData,
+  method = "MLP",           # uses the nnet package under the hood
+  trControl = ctrl,
+  metric = "ROC",            # optimize area under ROC
+  preProcess = c("center","scale", "nzv"),  # standardize numeric predictors, remove near zero variance
+  tuneLength = 5,            # try 5 combos of hyperparameters
+  trace = FALSE              # suppress training logs
+)
+
+# Inspect the model
+MLP_model
+
+```
+
+## Evaluation
+```{r}
+pred_probs <- predict(nn_model, newdata = testData, type = "prob")  # predicted probabilities
+pred_class <- predict(nn_model, newdata = testData, type = "raw")   # predicted classes
+
+# 1. Make sure your reference (testData$TARGET) is a factor with levels "0","1"
+testData$TARGET <- factor(testData$TARGET, levels = c("0","1"))
+
+# 2. Make sure pred_class is also a factor with the same levels
+pred_class <- factor(pred_class, levels = c("0","1"))
+
+# 3. Then confusionMatrix should work
+confMat <- confusionMatrix(pred_class, testData$TARGET, positive = "1")
+confMat
+
+
+# ROC curve, AUC, etc.
+library(pROC)
+roc_obj <- roc(response = testData$TARGET, predictor = pred_probs[,"Class1"])
+auc(roc_obj)
+
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
