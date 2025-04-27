@@ -1,0 +1,563 @@
+---
+title: "HomeCredit Functions Galore!"
+author: "DataLAKE"
+date: "2025-03-05"
+output: ''
+---
+
+
+
+# Previous workflow
+This is the workflow I was using for my neural network, it's still running (some say it'll never stop) so I wanted to show you what I was working with and how I created the subsequent functions. This is all pretty rough for the functions and I'll pick it back up tomorrow to clean and validate that everything works. Cheers y'all!
+
+## Housekeeping
+Loading libraries and reading in data.
+```{r}
+library(dplyr)
+library(data.table)   # for faster reading if desired
+library(caret)        # for model training
+library(nnet)         # neural network engine
+```
+
+I went back to my EDA and exported the cleaned data as an RDS file (binary and easier for R to read/work with). You can exchange this for a read_csv function with the dataset on your computer if you don't want to use mine. I didn't update my cleaning after our project meeting so if we have a universally agreed upon clean set, let's use that instead. 
+
+```{r Save cleaned data as RDS or CSV}
+# Save as RDS
+saveRDS(home_credit_filtered, "application_clean.rds")
+
+# Save as CSV for visual exploration
+# write.csv(application_clean, "application_clean.csv", row.names = FALSE)
+
+
+```
+
+```{r, read in data}
+
+# Read Data (paths may differ)
+application <- readRDS("application_clean.rds")
+bureau <- fread("bureau.csv")
+bureau_balance <- fread("bureau_balance.csv")
+
+```
+
+## Downsample
+Creating a sample dataset to reduce training time. Adjusting for wildly imbalanced TARGET variable in the downsample.
+
+```{r}
+
+# Downsample with prejudice to fix target imbalance
+# Split into majority/minority
+minority <- application %>% filter(TARGET == 1)
+majority <- application %>% filter(TARGET == 0)
+
+set.seed(123)
+# 70/30 split for downsample between majority/minority target classes
+desired_ratio <- 70 / 30
+desired_majority_size <- floor(desired_ratio * nrow(minority))
+majority_downsampled <- majority %>%
+  sample_n(size = desired_majority_size)
+
+# Unsplit (making up words over here)
+application_balanced <- bind_rows(minority, majority_downsampled)
+table(application_balanced$TARGET)
+
+```
+
+## Aggregation
+Aggregating auxillary tables so there is only one line per SK_ID number
+```{r}
+# Starting with just avg of months_balance
+bureau_balance_agg <- bureau_balance %>%
+  group_by(SK_ID_BUREAU) %>%
+  summarise(
+    MONTHS_BALANCE_MEAN = mean(MONTHS_BALANCE, na.rm = TRUE)
+  )
+
+```
+Started with avg of months_balance, but might want to use min() so it's the most recent?
+
+## Cleaning
+Clean the auxillary tables before merging
+```{r}
+dim(bureau)
+dim(bureau_balance)
+
+str(bureau)
+str(bureau_balance)
+
+```
+
+```{r}
+bureau <- bureau %>%
+  distinct()  # removes exact duplicates
+bureau_balance <- bureau_balance %>%
+  distinct()
+# Function to get % of NA in each column
+na_percentage <- function(df) {
+  sapply(df, function(x) mean(is.na(x))) * 100
+}
+
+bureau_na_pct <- na_percentage(bureau)
+bureau_balance_na_pct <- na_percentage(bureau_balance)
+
+bureau_na_pct
+bureau_balance_na_pct
+
+
+```
+
+```{r}
+# (A) Convert to character
+bureau$CREDIT_ACTIVE <- as.character(bureau$CREDIT_ACTIVE)
+str(bureau$CREDIT_ACTIVE) 
+# Check if it's "character" now
+
+# (B) Replace NA with "Unknown"
+bureau$CREDIT_ACTIVE[is.na(bureau$CREDIT_ACTIVE)] <- "Unknown"
+table(bureau$CREDIT_ACTIVE, useNA = "ifany")
+
+# (C) Re-factor
+bureau$CREDIT_ACTIVE <- as.factor(bureau$CREDIT_ACTIVE)
+str(bureau$CREDIT_ACTIVE)
+table(bureau$CREDIT_ACTIVE, useNA = "ifany")
+
+
+if ("CREDIT_ACTIVE" %in% names(bureau)) {
+  bureau$CREDIT_ACTIVE <- as.character(bureau$CREDIT_ACTIVE)
+  bureau$CREDIT_ACTIVE[is.na(bureau$CREDIT_ACTIVE)] <- "Unknown"
+  bureau$CREDIT_ACTIVE <- as.factor(bureau$CREDIT_ACTIVE)
+}
+
+bureau$AMT_CREDIT_SUM[is.na(bureau$AMT_CREDIT_SUM)] <- median(bureau$AMT_CREDIT_SUM, na.rm = TRUE)
+if("CREDIT_ACTIVE" %in% names(bureau)) {
+  bureau$CREDIT_ACTIVE[is.na(bureau$CREDIT_ACTIVE)] <- "Unknown"
+}
+bureau <- na.omit(bureau)
+
+```
+
+
+
+```{r}
+#write_csv(bureau, "bureau_cleaned.csv")
+#write_csv(bureau_balance, "bureau_balance_cleaned.csv")
+
+```
+
+
+
+
+## Merging
+Merging auxillary tables first.
+```{r}
+# Smish-smash let's join em up
+bureau_joined <- bureau %>%
+  left_join(bureau_balance_agg, by = "SK_ID_BUREAU")
+
+bureau_summary <- bureau_joined %>%
+  group_by(SK_ID_CURR) %>%
+  summarise(
+    count_records       = n(),
+    avg_credit_sum      = mean(AMT_CREDIT_SUM, na.rm = TRUE),
+    total_debt_sum      = sum(AMT_CREDIT_SUM_DEBT, na.rm = TRUE),
+    max_overdue         = max(AMT_CREDIT_SUM_OVERDUE, na.rm = TRUE),
+    avg_months_balance  = mean(MONTHS_BALANCE_MEAN, na.rm = TRUE)
+  )
+bureau_summary$avg_months_balance[is.na(bureau_summary$avg_months_balance)] <- 0
+
+```
+
+```{r, include = FALSE}
+# Recalculate missing values after imputation
+missing_after <- colSums(is.na(bureau_summary))
+missing_after <- missing_after[missing_after > 0]  # Keep only columns still missing values (should be empty)
+
+# Create a summary table for missing values after imputation
+missing_after_table <- data.frame(
+  Column = names(missing_after),
+  Missing_Count = missing_after
+)
+
+# Print the table (should be empty if imputation worked)
+print(missing_after_table)
+
+# Double check for na values because I'm paranoid
+sum(is.na(bureau_summary))  # Should return 0
+```
+
+Joining aux tables to main application table.
+```{r}
+# Smish-smash again, bureau tables to application table
+merged_data <- application_balanced %>%
+  left_join(bureau_summary, by = "SK_ID_CURR")
+
+```
+
+Because the join was a left to keep our sample large, there may be some IDs that not have missing data in columns. If intersect is much smaller, that means many ID numbers didn't match up.
+```{r}
+length(intersect(application_balanced$SK_ID_CURR, bureau_summary$SK_ID_CURR))
+length(unique(application_balanced$SK_ID_CURR))
+length(unique(bureau_summary$SK_ID_CURR))
+
+```
+Filling in missing data with 0
+```{r}
+merged_data <- merged_data %>%
+  mutate(
+    count_records      = if_else(is.na(count_records), 0, count_records),
+    avg_credit_sum     = if_else(is.na(avg_credit_sum), 0, avg_credit_sum),
+    total_debt_sum     = if_else(is.na(total_debt_sum), 0, total_debt_sum),
+    max_overdue        = if_else(is.na(max_overdue), 0, max_overdue),
+    avg_months_balance = if_else(is.na(avg_months_balance), 0, avg_months_balance)
+  )
+
+```
+
+
+
+```{r, include = FALSE}
+# Recalculate missing values after imputation
+missing_after <- colSums(is.na(merged_data))
+missing_after <- missing_after[missing_after > 0]  # Keep only columns still missing values (should be empty)
+
+# Create a summary table for missing values after imputation
+missing_after_table <- data.frame(
+  Column = names(missing_after),
+  Missing_Count = missing_after
+)
+
+# Print the table (should be empty if imputation worked)
+print(missing_after_table)
+
+# Double check for na values because I'm paranoid
+sum(is.na(merged_data))  # Should return 0
+```
+
+
+## Data transformation
+Removing irrelevant columns and transforming TARGET variable
+
+```{r}
+# Convert TARGET to factor for classification
+merged_data$TARGET <- factor(merged_data$TARGET, levels = c(0,1))
+
+# Remove IDs or any columns you don't want to feed to the model
+merged_data <- merged_data %>%
+  select(-SK_ID_CURR)
+
+# Structure check
+str(merged_data)
+
+```
+
+
+```{r}
+sum(is.na(merged_data)) 
+```
+
+
+```{r}
+saveRDS(merged_data, "merged_data.rds")
+```
+
+# Functions
+## EDA
+
+A simple function that calculates column-wise number of NAs and total NAs.
+```{r}
+check_missing_data <- function(df, label = "Data Frame") {
+  # Column-wise NA counts
+  col_na_counts <- colSums(is.na(df))
+  # Filter columns that have any NAs
+  col_na_counts <- col_na_counts[col_na_counts > 0]
+  
+  # Total NAs
+  total_nas <- sum(is.na(df))
+  
+  # Print or return a summary
+  if (length(col_na_counts) == 0) {
+    message(paste(label, "- No missing values"))
+  } else {
+    message(paste(label, "- Missing values found:"))
+    print(
+      data.frame(
+        Column = names(col_na_counts),
+        Missing_Count = col_na_counts
+      )
+    )
+  }
+  message(paste(label, "- Total NAs:", total_nas))
+  
+  # (Optional) Return a named list
+  return(list(
+    col_na_counts = col_na_counts,
+    total_nas = total_nas
+  ))
+}
+
+```
+
+## Sampling
+Idk how best to make this an ambi-sampling, so for now we'll settle with downsampling until I can look into SMOTE.
+```{r}
+downsample_target <- function(df, target_col, ratio = 1.0, seed = 42) {
+  # Convert target_col to string if it's a symbol
+  target_col <- rlang::ensym(target_col)  # if you want tidy evaluation
+  
+  # Separate majority/minority
+  minority_df <- df %>% dplyr::filter(!!target_col == 1)
+  majority_df <- df %>% dplyr::filter(!!target_col == 0)
+  
+  set.seed(seed)
+  # Desired majority size
+  desired_majority_size <- floor(ratio * nrow(minority_df))
+  
+  # Downsample majority
+  majority_downsampled <- majority_df %>%
+    dplyr::sample_n(size = desired_majority_size)
+  
+  # Combine
+  combined_df <- dplyr::bind_rows(minority_df, majority_downsampled)
+  
+  return(combined_df)
+}
+```
+
+## Factor imputation
+Okay, this is to help impute factor variable NAs with an "Unknown" class. If we think it's more beneficial, I can replace it with the column mode.
+```{r}
+safe_factor_replace <- function(df, col_name, new_level = "Unknown") {
+  # Check if column exists
+  if (!col_name %in% names(df)) {
+    warning(paste("Column", col_name, "not found in df. Returning original df."))
+    return(df)
+  }
+  # Convert factor to character if needed
+  if (is.factor(df[[col_name]])) {
+    df[[col_name]] <- as.character(df[[col_name]])
+  }
+  # Replace NA with new_level
+  df[[col_name]][is.na(df[[col_name]])] <- new_level
+  # Convert back to factor
+  df[[col_name]] <- factor(df[[col_name]], levels = unique(df[[col_name]]))
+  
+  return(df)
+}
+
+```
+
+## Numeric variable imputation
+This function will allow you to impute a column with whatever strategy you want. It doesn't impute all columns so you'll have to enter a list if you want to apply this to more than one column at a time. I added in min/max so we have the option because it seems reasonable for months balance when we might waant the most recent balance to be retained, or max when we want the largest debt to be retained. I think I added all the possibilities but it can be increased
+
+```{r}
+impute_numeric_col <- function(df, col_name, strategy = "median") {
+  # Check if the specified column exists
+  if (!col_name %in% names(df)) {
+    warning(paste("Column", col_name, "not found in df. Returning original df."))
+    return(df)
+  }
+  # Check if it's numeric
+  if (!is.numeric(df[[col_name]])) {
+    warning(paste("Column", col_name, "is not numeric. Returning original df."))
+    return(df)
+  }
+  
+  # Determine the fill value based on the strategy
+  fill_val <- NA
+  if (strategy == "zero") {
+    fill_val <- 0
+  } else if (strategy == "min") {
+    fill_val <- min(df[[col_name]], na.rm = TRUE)
+  } else if (strategy == "max") {
+    fill_val <- max(df[[col_name]], na.rm = TRUE)
+  } else if (strategy == "median") {
+    fill_val <- median(df[[col_name]], na.rm = TRUE)
+  } else if (strategy == "mean") {
+    fill_val <- mean(df[[col_name]], na.rm = TRUE)
+  } else if (strategy == "sum") {
+    fill_val <- sum(df[[col_name]], na.rm = TRUE)
+  } else {
+    stop("strategy must be one of 'zero', 'min', 'max', 'median', or 'mean'")
+  }
+  
+  # Replace NA with the chosen fill value
+  df[[col_name]][is.na(df[[col_name]])] <- fill_val
+  
+  return(df)
+}
+
+```
+
+
+
+
+## Auxillary dataset flattening
+And finally, GPT and I tried to make a function that flattens the auxillary datasets. I haven't tested this one and I'm unsure how well it works. If ya'll wanna play around with it keep me updated!
+```{r}
+flatten_dataset <- function(
+  data,
+  group_col = "SK_ID_CURR",
+  agg_numeric_fn = mean,
+  agg_numeric_fn_name = "mean",
+  agg_non_numeric = c("first", "mode", "drop")
+) {
+  # Choose how to handle non-numeric columns
+  agg_non_numeric <- match.arg(agg_non_numeric)
+  
+  # We'll do different approaches for numeric vs. non-numeric
+  # 1) Numeric columns: apply user-specified aggregator (agg_numeric_fn) with na.rm = TRUE
+  # 2) Non-numeric columns: either 'first', 'mode', or 'drop'
+  
+  library(dplyr)
+  
+  # Step 1: Group by the specified ID column
+  group_sym <- rlang::sym(group_col)  # treat group_col as a symbol
+  
+  # Step 2: Build the summarise specification
+  # Numeric columns
+  numeric_summarise <- across(
+    .cols = where(is.numeric),
+    .fns  = ~ agg_numeric_fn(.x, na.rm = TRUE),
+    .names = "{.col}_{agg_numeric_fn_name}"
+  )
+  
+  # Non-numeric columns
+  # We'll define a small helper:
+  handle_non_numeric <- function(df) {
+    if (agg_non_numeric == "first") {
+      across(.cols = where(Negate(is.numeric)), .fns = ~ dplyr::first(.x), .names = "{.col}_first")
+    } else if (agg_non_numeric == "mode") {
+      across(.cols = where(Negate(is.numeric)), .fns = ~ get_mode(.x), .names = "{.col}_mode")
+    } else if (agg_non_numeric == "drop") {
+      # Return nothing
+      NULL
+    }
+  }
+  
+  # If using mode, define a helper function for mode
+  get_mode <- function(x) {
+    # Convert to character to handle factors or chars
+    tx <- as.character(x)
+    ux <- unique(na.omit(tx))
+    if (length(ux) == 0) return(NA)
+    tab <- tabulate(match(tx, ux))
+    # If there's a tie, this returns the first in alphabetical order
+    ux[which.max(tab)]
+  }
+  
+  # Step 3: Summarise with dplyr
+  out <- data %>%
+    group_by(!!group_sym) %>%
+    summarise(
+      # Combine numeric aggregator with non-numeric aggregator
+      numeric_summarise,
+      handle_non_numeric(cur_data())
+      # ^ This calls either first, mode, or nothing on non-numerics
+    ) %>%
+    ungroup()
+  
+  return(out)
+}
+
+```
+
+
+
+Explanation
+group_col: Which column identifies the “entity” you want one row per – for example, "SK_ID_CURR".
+
+agg_numeric_fn: Any function like mean, sum, min, etc. (must accept an na.rm argument if you want to ignore NAs).
+
+agg_numeric_fn_name: A short string describing your aggregator (“mean”, “sum”, …). We use it in the new column names.
+
+agg_non_numeric: Tells us how to handle character/factor columns:
+"first": Take the first value found in each group.
+"mode": Calculate the most frequent value in each group.
+"drop": Don’t include non-numeric columns in the output.
+
+We define a small helper function get_mode() in case you choose "mode" for non-numeric columns.
+
+```{r}
+# Usage example of flattening
+# Suppose 'my_data' can have multiple rows for each SK_ID_CURR
+my_flattened <- flatten_dataset(
+  data = my_data,
+  group_col = "SK_ID_CURR", 
+  agg_numeric_fn = mean,
+  agg_numeric_fn_name = "mean",
+  agg_non_numeric = "first"
+)
+
+
+my_flattened <- flatten_dataset(
+  data = bureau_balance,
+  group_col = "SK_ID_BUREAU",
+  agg_numeric_fn = sum,
+  agg_numeric_fn_name = "sum",
+  agg_non_numeric = "drop"
+)
+
+
+my_flattened <- flatten_dataset(
+  data = my_data,
+  group_col = "SK_ID_CURR",
+  agg_numeric_fn = mean,
+  agg_numeric_fn_name = "mean",
+  agg_non_numeric = "mode"
+)
+
+```
+
+Notes
+This function creates new column names for numeric aggregations, e.g. AMT_CREDIT_SUM_mean. If you prefer overwriting the original column name, you can adjust the .names argument in across().
+For large data, note that summarizing many columns can be slow. You might want to specify fewer columns explicitly or use across(starts_with("AMT_"), ...) or similar.
+If you have multiple numeric aggregator functions in mind (e.g., both mean and sum for different columns), you can do multiple calls to across() or call summarise() multiple times, or adapt the code to handle a list of aggregator functions.
+This pattern gives you a highly flexible “flattening” (or “aggregation”) tool so you can easily reduce a one-to-many dataset into one row per ID with summary statistics.
+
+
+
+# Cross-validation function
+```{r  Cross-Validation function build}
+
+cv_function <- function(df, target, nFolds, seedVal, prediction_method, metrics_list)
+{
+  # create folds
+  set.seed(seedVal)
+  folds = createFolds(df[,target],nFolds) 
+  # perform cross validation
+  cv_results <- lapply(folds, function(x)
+  { 
+    test_target <- df[x,target]
+    test_input  <- df[x,-target]
+
+    train_target <- df[-x,target]
+    train_input <- df[-x,-target]
+
+    prediction_model <- prediction_method(train_target~.,train_input) 
+    pred<- predict(prediction_model,test_input)
+    return(mmetric(test_target,pred,metrics_list))
+  })
+  # generate means and sds and show cv results, means and sds using kable
+  cv_results_m <- as.matrix(as.data.frame(cv_results))
+  cv_mean<- as.matrix(rowMeans(cv_results_m))
+  cv_sd <- as.matrix(rowSds(cv_results_m))
+  colnames(cv_mean) <- "Mean"
+  colnames(cv_sd) <- "Sd"
+  cv_all <- cbind(cv_results_m, cv_mean, cv_sd)
+  kable(t(cv_all),digits=2)
+}
+```
+
+## 5-fold CV
+Call the function in 3.A to generate 5-fold cross-validation results of lm, rpart and M5P models for NA_sales.
+```{r 5-fold CV for lm model}
+df <- home_credit
+target <- 8
+nFolds <- 5
+seedVal <- 123
+metrics_list <- c("ACC", "PRECISION", "TPR", "F1")
+
+
+#Call cv_function for lm
+cv_function(df, target, nFolds, seedVal, lm, metrics_list)
+
